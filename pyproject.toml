@@ -6,6 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "chess>=1.11.2",
+    "duckdb>=1.5.2",
+    "lightning>=2.6.1",
     "marimo>=0.22.4",
+    "mlflow>=3.11.1",
+    "numpy>=2.4.4",
+    "sqlglot>=30.4.3",
+    "torch>=2.11.0",
+    "tqdm>=4.67.3",
     "zstandard>=0.25.0",
 ]
