@@ -3,8 +3,8 @@ import sqlite3
 import zstandard
 import io
 import json
+import random
 from tqdm import tqdm
-import duckdb
 from torch.utils.data import IterableDataset
 import lightning
 import torch
@@ -13,15 +13,15 @@ import numpy as np
 from torch.utils.data import DataLoader
 from lightning.pytorch.loggers import MLFlowLogger
 
-con = sqlite3.connect("chess_dataset.db")
-db = con.cursor()
-db.execute("""
-    CREATE TABLE IF NOT EXISTS evaluations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bin blob,
-        eval REAL
-    )
-""")
+# con = sqlite3.connect("chess_dataset.db")
+# db = con.cursor()
+# db.execute("""
+#   CREATE TABLE IF NOT EXISTS evaluations (
+#       id INTEGER PRIMARY KEY AUTOINCREMENT,
+#       bin blob,
+#       eval REAL
+#   )
+# """)
 
 
 def encode_fen(fen):
@@ -142,17 +142,12 @@ def display_fen(game):
         print(move_san, board.fen(), node.comment)
 
 
-duckdb.sql("ATTACH 'chess_dataset.db' AS chessdb (TYPE sqlite)")
-duckdb.sql("""show tables from chessdb""").show()
-# duckdb.sql("SELECT * FROM mydb.my_table LIMIT 10").show()
-
-
 class ChessDataset(IterableDataset):
     def __init__(self, db_path, table_name):
         self.db_path = db_path
         self.table_name = table_name
         # Connect once to get the total row count
-        conn = duckdb.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {self.table_name}")
         self.count = cursor.fetchone()[0]
@@ -163,7 +158,7 @@ class ChessDataset(IterableDataset):
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
-        conn = duckdb.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path)
 
         # modulus perfectly partitions the stream
         query = f"""
@@ -171,12 +166,29 @@ class ChessDataset(IterableDataset):
                 WHERE id % {worker_info.num_workers} = {worker_info.id}"""
 
         cursor = conn.execute(query)
+        buffer_size = 10000
+        buffer = []
         for row in cursor:
-            bits = np.unpackbits(np.frombuffer(text[0][1], dtype=np.uint8)).astype(
+            if len(buffer) < buffer_size:
+                buffer.append(row)
+                continue
+            idx = random.randint(0, buffer_size - 1)
+            out = buffer[idx]
+            buffer[idx] = row
+            bits = np.unpackbits(np.frombuffer(out[0], dtype=np.uint8)).astype(
                 np.float32
             )[:837]
             x = torch.tensor(bits)
-            y = torch.tensor(row[1], dtype=torch.float32)
+            y = torch.tensor(out[1], dtype=torch.float32)
+            yield x, y
+
+        random.shuffle(buffer)
+        for out in buffer:
+            bits = np.unpackbits(np.frombuffer(out[0], dtype=np.uint8)).astype(
+                np.float32
+            )[:837]
+            x = torch.tensor(bits)
+            y = torch.tensor(out[1], dtype=torch.float32)
             yield x, y
 
         conn.close()
@@ -184,7 +196,7 @@ class ChessDataset(IterableDataset):
 
 class ChessModel(lightning.LightningModule):
     def __init__(
-        self, lr=0.01, batch_size=1024, layer_count=6, in_feat=808, out_feat=1
+        self, lr=1e-3, batch_size=1024, layer_count=6, in_feat=837, out_feat=1
     ):
         super().__init__()
         self.lr = lr
@@ -199,13 +211,13 @@ class ChessModel(lightning.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         y_hat = self.seg(x)
-        loss = nn.functional.mse_loss(y_hat.squeeze(), y)
+        loss = nn.functional.l1_loss(y_hat.squeeze(), y)
         self.log("train_loss", loss, on_step=True, on_epoch=True)
 
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.02)
+        return torch.optim.Adam(self.parameters(), lr=self.lr)
 
 
 if __name__ == "__main__":

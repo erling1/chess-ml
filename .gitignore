@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.ipynb_checkpoints/
+
+# Data / DB
+chess_dataset.db
+lichess_db_eval.jsonl.zst
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-journal
+
+# Lightning
+lightning_logs/
+*.ckpt
